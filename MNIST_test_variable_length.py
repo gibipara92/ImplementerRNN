@@ -264,11 +264,12 @@ def train_net(H, programs, optimizers, epochs, dataloader, train_H, task_id='', 
 
     return
 
-ims = []
+
 batch_size = 64
 total_dataset_size = 392
 test_size = 14
 train_size = total_dataset_size - test_size
+
 random.seed(1)
 torch.manual_seed(1)
 torch.cuda.manual_seed_all(1)
@@ -276,11 +277,12 @@ train_idx = random.sample(range(total_dataset_size),total_dataset_size - test_si
 test_idx = list(set(range(total_dataset_size)).difference(set(train_idx)))
 #mnist_dataset = Dataset(4)
 #imgs = mnist_dataset.dataloader_test
+ims = [] #  temp variable for collecting animations
 
 def triangular_number(n):
     return n * (n + 1) // 2
 
-loss_penalties = torch.Tensor(np.array([triangular_number(49 - i) for i in range(50)])).cuda()
+loss_penalties = torch.Tensor(np.array([triangular_number(args.p_dim - 1 - i) for i in range(args.p_dim)])).cuda()
 
 def length_regularization(programs, idxs):
     penalty = 0
@@ -305,7 +307,7 @@ dataset = datasets.MNIST(root='/home/ubuntu/PycharmProjects/IndependentMechanism
                                      transforms.ToTensor(),
                                      transforms.Lambda(lambda x: (x * 2.0) - 1.0),
                                  ]))
-dataloader = torch.utils.data.DataLoader(dataset, batch_size=378, drop_last=False, shuffle=True, num_workers=int(2))
+dataloader = torch.utils.data.DataLoader(dataset, batch_size=train_size, drop_last=False, shuffle=True, num_workers=int(2))
 for batch_idx, (mnist_data, mnist_target) in enumerate(dataloader):
     mnist_data = mnist_data.cuda()
     mnist_data = F.upsample(mnist_data, size=(mnist_data.size(2) // 2, mnist_data.size(3) // 2), mode='bilinear')
@@ -322,7 +324,7 @@ function_dataloader = utils.DataLoader(function_dataset, batch_size=64, shuffle=
 #        dataset.append((result, ej, target))
 
 
-H = Hypernet(p_dim=args.p_dim, input_dim=args.imsize * args.imsize, output_dim=49, dataloader=function_dataloader).to(device)
+H = Hypernet(p_dim=args.p_dim, input_dim=args.imsize * args.imsize, output_dim=args.p_dim, dataloader=function_dataloader).to(device)
 #H = torch.load("//home/ubuntu/implementer_data/good_model_length_20.pyt")
 H = torch.load("/home/ubuntu/implementer_data/variable_length_models.pyt")
 H.optimizer = optim.RMSprop(H.parameters(), lr=0.01)
