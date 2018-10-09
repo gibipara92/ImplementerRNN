@@ -26,7 +26,6 @@ import joblib
 from torch.optim.lr_scheduler import StepLR
 import matplotlib.animation as animation
 from tensorboardX import SummaryWriter
-from cls import CyclicLR
 from copy import deepcopy
 
 writer = SummaryWriter()
@@ -35,14 +34,17 @@ parser = argparse.ArgumentParser(description='PyTorch MNIST RGAN')
 # Choose dataset
 parser.add_argument('--dataset', default='mnist', help='cifar10 | lsun | imagenet | folder | lfw', type=str)
 # Specify size of images in dataset
-parser.add_argument('--imsize', type=int, default=32, help='the height / width of the input image to network')
+parser.add_argument('--imsize', type=int, default=16, help='the height / width of the input image to network')
 parser.add_argument('--epochs', type=int, default=100, help='the height / width of the input image to network')
 parser.add_argument('--p_dim', type=int, default=20, help='the program size to network')
-parser.add_argument('--reg_lambda', type=int, default=1000, help='coefficient for regularization term')
-parser.add_argument('--path_img',   default='~/Downloads/implmenter_ims', help='Path', type=str)
+parser.add_argument('--reg_lambda', type=int, default=0.0002, help='coefficient for regularization term')
+parser.add_argument('--noise', type=float, default=0.2, help='Amount of noise to add to programs during training')
+parser.add_argument('--test_copies', type=float, default=50, help='Number of random initializations per test program')
+parser.add_argument('--path_img',   default='/home/ubuntu/PycharmProjects/IndependentMechanisms/mnist', help='Path to dataset', type=str)
 parser.add_argument('--no_train_H', action='store_true', default=False, help='Do not train the HyperNet')
 parser.add_argument('--no_train_p', action='store_true', default=False, help='Do not train the program')
 parser.add_argument('--debug', action='store_true', default=False, help='Use dropout in E')
+
 
 args = parser.parse_args()
 
@@ -81,7 +83,7 @@ class Dataset(object):
     def __init__(self, batch_size):
         function_dataset = utils.TensorDataset(torch.Tensor(range(392)), torch.stack([torch.Tensor(i) for i in generate_translations_dataset()]))
         self.function_dataloader = utils.DataLoader(function_dataset, batch_size=batch_size, shuffle=True)
-        self.dataset = datasets.MNIST(root='/home/ubuntu/PycharmProjects/IndependentMechanisms/mnist', train=True, download=True,
+        self.dataset = datasets.MNIST(root=args.path_img, train=True, download=True,
                                  transform=transforms.Compose([
                                      # transforms.Scale(args.imsize-4),
                                      transforms.Pad(padding=2),
@@ -90,7 +92,7 @@ class Dataset(object):
                                  ]))
         self.dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, drop_last=False,
                                                       shuffle=True, num_workers=int(2))
-        dataset_test = datasets.MNIST(root='/home/ubuntu/PycharmProjects/IndependentMechanisms/mnist', train=False, download=True,
+        dataset_test = datasets.MNIST(root=args.path_img, train=False, download=True,
                                       transform=transforms.Compose([
                                           # transforms.Scale(args.imsize-4),
                                           transforms.Pad(padding=2),
@@ -132,10 +134,10 @@ class Hypernet(nn.Module):
         else:
             self.dataloader = dataloader
 
-    def implement_W(self, p, redundant_train=False):
+    def implement_W(self, p, add_noise=False):
         p = p.view(-1, p.shape[-2])
-        if redundant_train:
-            noise = torch.normal(mean=torch.zeros(p.shape), std=0.2)
+        if add_noise:
+            noise = torch.normal(mean=torch.zeros(p.shape), std=args.noise)
             p += noise.cuda()
         p = torch.tanh(p)
         #p = p.view(-1, args.p_dim)
@@ -152,18 +154,18 @@ class Hypernet(nn.Module):
         c2 = 0
         # Counter increments until weight vector of generated filter is complete
         while c2 < self.output_dim:
-            for i, input_t in enumerate(range(49)):
+            for i, input_t in enumerate(range(self.output_dim)):
                 h_t2, c_t2 = self.lstm2(h_t1, (h_t2, c_t2))
                 outputs += [torch.mm(h_t2, self.fc1)]
                 c2 += 1
                 if c2 == self.output_dim:
                     break
             h2 = torch.stack(outputs, 1).squeeze()
-        return h2.view(-1, 1, 7, 7)
+        return h2.view(-1, 1, conv_mat_size, conv_mat_size)
 
 
-    def forward(self, p, input_data):
-        conv_mat = self.implement_W(torch.stack(p), redundant_train=True)
+    def forward(self, p, input_data, add_noise=False):
+        conv_mat = self.implement_W(torch.stack(p), add_noise=add_noise)
         output = F.conv2d(input=input_data, weight=conv_mat, bias=None, padding=3)
         # output = F.linear(input=output, weight=weight2)
         # return conv_mat
@@ -181,10 +183,10 @@ def train_epoch(H, programs, optimizers, add_noise, epoch, dataloader, train_H, 
         for i in list(np.array(idxs).astype(int)):
             optimizers[i].zero_grad()
         #output = H.implement_W(data, redundant_train=add_noise)
-        output = H.forward([programs[int(i.item())] for i in idxs], data.view(-1, 1, 16, 16))
+        output = H.forward([programs[int(i.item())] for i in idxs], data.view(-1, 1, args.imsize, args.imsize), add_noise=add_noise)
         target = F.conv2d(input=mnist_data, weight=target.cuda(), bias=None, padding=3)
         mse_loss = F.mse_loss(output, target)
-        lr_loss = length_regularization(programs, idxs) / args.reg_lambda
+        lr_loss = length_regularization(programs, idxs) * args.reg_lambda
         loss = mse_loss + (lr_loss)
         loss.backward()
         #ETA = .000
@@ -268,6 +270,7 @@ def train_net(H, programs, optimizers, epochs, dataloader, train_H, task_id='', 
 batch_size = 64
 total_dataset_size = 392
 test_size = 14
+conv_mat_size = 7
 train_size = total_dataset_size - test_size
 
 random.seed(1)
@@ -326,8 +329,8 @@ function_dataloader = utils.DataLoader(function_dataset, batch_size=64, shuffle=
 
 H = Hypernet(p_dim=args.p_dim, input_dim=args.imsize * args.imsize, output_dim=args.p_dim, dataloader=function_dataloader).to(device)
 #H = torch.load("//home/ubuntu/implementer_data/good_model_length_20.pyt")
-H = torch.load("/home/ubuntu/implementer_data/variable_length_models.pyt")
-H.optimizer = optim.RMSprop(H.parameters(), lr=0.01)
+#H = torch.load("/home/ubuntu/implementer_data/variable_length_models.pyt")
+H.optimizer = optim.RMSprop(H.parameters(), lr=0.001)
 
 #scheduler = CyclicLR(H.optimizer, base_lr=0.000005, max_lr=0.001, step_size=args.epochs // 10, mode='triangular2')
 scheduler = StepLR(H.optimizer, step_size=max(1000, args.epochs) // 3, gamma=0.1)
@@ -338,9 +341,9 @@ schedulers = []
 
 rand_ints = random.sample(range(train_size), 20)
 
-programs = torch.load("/home/ubuntu/implementer_data/variable_length_programs.pyt")
+#programs = torch.load("/home/ubuntu/implementer_data/variable_length_programs.pyt")
 for i in range(train_size):
-    #programs.append(nn.Parameter(Variable(torch.randn((args.p_dim, 1)).to(device), requires_grad=True).data))
+    programs.append(nn.Parameter(Variable(torch.randn((args.p_dim, 1)).to(device), requires_grad=True).data))
     optimizer_temp = optim.RMSprop([programs[i]], lr=0.1)
     optimizers.append(optimizer_temp)
     #schedulers.append(CyclicLR(optimizer_temp, base_lr=0.00005, max_lr=0.01, step_size=args.epochs // 100, mode='triangular2'))
@@ -350,7 +353,7 @@ for i in range(train_size):
 
 H.lr_loss = []
 H.mse_loss = []
-#train_net(H, programs, optimizers, args.epochs, function_dataloader, True)
+train_net(H, programs, optimizers, args.epochs, function_dataloader, True)
 
 
 #ani = animation.ArtistAnimation(fig, ims, interval=25, blit=True, repeat_delay=0)
@@ -414,11 +417,14 @@ rand_function_ints = random.sample(range(64), 20)
 
 
 plt.figure()
-for i in range(10):
-    plt.subplot(2,10,i+1)
-    plt.imshow(np.array(H.forward([programs[rand_function_ints[i]]], mnist_data[rand_mnist_ints[i]].view(1,1,16,16)).cpu().detach().numpy()).reshape(16, 16))
-    plt.subplot(2, 10, 10 + i + 1)
-    plt.imshow(np.array(F.conv2d(input=mnist_data[rand_mnist_ints[i]].view(1,1,16,16), weight=torch.Tensor(generate_translations_dataset()[0][rand_function_ints[i]]).view(1, 1, 7, 7).cuda(), bias=None, padding=3)).reshape(16, 16))
+for i in range(args.number_train_displayed):
+    plt.subplot(2, args.number_train_displayed, i+1)
+    plt.imshow(np.array(H.forward([programs[rand_function_ints[i]]],
+                                  mnist_data[rand_mnist_ints[i]].view(1, 1, args.imsize, args.imsize)).cpu().detach().numpy()).reshape(args.imsize, args.imsize))
+    plt.subplot(2, args.number_train_displayed, args.number_train_displayed + i + 1)
+    plt.imshow(np.array(F.conv2d(input=mnist_data[rand_mnist_ints[i]].view(1, 1, args.imsize, args.imsize),
+                                 weight=torch.Tensor(generate_translations_dataset()[0][rand_function_ints[i]]).view(1, 1, conv_mat_size, conv_mat_size).cuda(),
+                                 bias=None, padding=3)).reshape(args.imsize, args.imsize))
 
 plt.show()
 
@@ -449,8 +455,8 @@ plt.figure()
 args.no_train_H = True
 args.epochs = 5000
 
-function_dataset = utils.TensorDataset(torch.Tensor(range(test_size * 50)), torch.stack([torch.Tensor(i) for i in  50 * generate_translations_dataset()[2]]))
-function_dataloader = utils.DataLoader(function_dataset, batch_size=(test_size * 50), shuffle=True, drop_last=True)
+function_dataset = utils.TensorDataset(torch.Tensor(range(test_size * args.test_copies)), torch.stack([torch.Tensor(i) for i in args.test_copies * generate_translations_dataset()[2]]))
+function_dataloader = utils.DataLoader(function_dataset, batch_size=(test_size * args.test_copies), shuffle=True, drop_last=True)
 
 programs = []
 optimizers = []
@@ -462,7 +468,7 @@ schedulers = []
 
 
 #programs = torch.load("/home/ubuntu/implementer_data/Great_programs.pyt")
-for i in range(test_size * 50):
+for i in range(test_size * args.test_copies):
     programs.append(nn.Parameter(Variable(torch.randn((args.p_dim, 1)).to(device), requires_grad=False).data))
     optimizer_temp = optim.RMSprop([programs[i]], lr=0.1)
     optimizers.append(optimizer_temp)
@@ -480,30 +486,30 @@ train_net(H, programs, optimizers, args.epochs, function_dataloader, True, add_n
 
 plt.figure()
 post_program_mat = []
-for i in range(14):
-    post_program_mat.append(torch.stack(programs[i::14]))
+for i in range(test_size):
+    post_program_mat.append(torch.stack(programs[i::test_size]))
 post_program_mat = torch.cat(post_program_mat).cpu().detach().numpy()
-plt.imshow(post_program_mat.reshape(700, args.p_dim).T)
+plt.imshow(post_program_mat.reshape(test_size * args.test_copies, args.p_dim).T)
 plt.show()
 
 dataset = generate_translations_dataset()
 
 plt.figure()
 for ei, i in enumerate(test_idx):
-    plt.subplot(3,14,ei+1)
-    plt.imshow(np.array(dataset[2][ei]).reshape(7, 7))
+    plt.subplot(3,test_size,ei+1)
+    plt.imshow(np.array(dataset[2][ei]).reshape(conv_mat_size, conv_mat_size))
     min_loss = 1000000000
     min_arg = -1
     losses = []
-    for j in range(50):
-        output = H.implement_W(programs[14*j + ei], redundant_train=True)
-        loss = F.mse_loss(output, torch.Tensor(generate_translations_dataset()[2][ei]).cuda().view(1, 1, 7, 7))
+    for j in range(args.test_copies):
+        output = H.implement_W(programs[test_size*j + ei], add_noise=False)
+        loss = F.mse_loss(output, torch.Tensor(generate_translations_dataset()[2][ei]).cuda().view(1, 1, conv_mat_size, conv_mat_size))
         if loss < min_loss:
             min_loss = loss
             min_arg = j
         losses.append(loss.item())
-    plt.subplot(3, 14, 14 + ei + 1)
-    plt.imshow(np.array(H.implement_W(programs[(14 * min_arg) + ei]).cpu().detach().numpy()).reshape(7, 7))
-    plt.subplot(3, 14, 28 + ei + 1)
-    plt.scatter(np.zeros(50), losses)
+    plt.subplot(3, test_size, test_size + ei + 1)
+    plt.imshow(np.array(H.implement_W(programs[(test_size * min_arg) + ei]).cpu().detach().numpy()).reshape(conv_mat_size, conv_mat_size))
+    plt.subplot(3, test_size, (test_size * 2) + ei + 1)
+    plt.scatter(np.zeros(args.test_copies), losses)
 plt.show()
