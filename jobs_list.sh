@@ -16,6 +16,7 @@ case "$1" in
     --p_lr 0.1 \
     --lstm_size 128 \
     --meta_folder ./meta
+    --path_img [Insert MNIST Path]
         ;;
 *) echo "Signal number $1 is not processed"
     ;;
