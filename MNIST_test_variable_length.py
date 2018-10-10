@@ -42,7 +42,7 @@ parser.add_argument('--imsize', type=int, default=32, help='the height / width o
 parser.add_argument('--epochs', type=int, default=100, help='the height / width of the input image to network')
 parser.add_argument('--p_dim', type=int, default=20, help='the program size to network')
 parser.add_argument('--lstm_size', type=int, default=128, help='Size of LSTM layers')
-parser.add_argument('--reg_lambda', type=float, default=0.00001, help='Size of LSTM layers')
+parser.add_argument('--reg_lambda', type=float, default=0.00001, help='Coefficient of regularization')
 parser.add_argument('--noise', type=float, default=0.2, help='Amount of noise to add to programs')
 parser.add_argument('--H_lr', type=float, default=0.001, help='Learning rate for implementer')
 parser.add_argument('--p_lr', type=float, default=0.1, help='Learning rate for programs')
