@@ -26,12 +26,10 @@ import joblib
 from torch.optim.lr_scheduler import StepLR
 import matplotlib.animation as animation
 from tensorboardX import SummaryWriter
+from cls import CyclicLR
 from copy import deepcopy
 from shutil import copyfile
 from datetime import datetime
-
-
-
 
 parser = argparse.ArgumentParser(description='PyTorch MNIST RGAN')
 # Choose dataset
@@ -44,7 +42,7 @@ parser.add_argument('--imsize', type=int, default=32, help='the height / width o
 parser.add_argument('--epochs', type=int, default=100, help='the height / width of the input image to network')
 parser.add_argument('--p_dim', type=int, default=20, help='the program size to network')
 parser.add_argument('--lstm_size', type=int, default=128, help='Size of LSTM layers')
-parser.add_argument('--reg_lambda', type=float, default=0.005, help='Coefficient of regularization term')
+parser.add_argument('--reg_lambda', type=float, default=0.000, help='Coefficient of regularization term')
 parser.add_argument('--noise', type=float, default=0.2, help='Amount of noise to add to programs')
 parser.add_argument('--H_lr', type=float, default=0.001, help='Learning rate for implementer')
 parser.add_argument('--p_lr', type=float, default=0.1, help='Learning rate for programs')
@@ -97,6 +95,7 @@ def generate_translations_dataset():
     test_features = []
     params = []
     counter = 0
+    print(test_idx)
     for i in range(7):
         for j in range(7):
             for inv in range(2):
@@ -112,11 +111,12 @@ def generate_translations_dataset():
                         filter *= -1
                     if counter in train_idx:
                         features.append(torch.from_numpy(np.array(filter)).view(1, conv_mat_size, conv_mat_size).float())
-                        params.append((i, j, inv, blur))
                     else:
-                        test_features.append(torch.from_numpy(np.array(filter)).view(1, conv_mat_size, conv_mat_size).float())
-
+                        features.append(np.zeros((1, conv_mat_size, conv_mat_size)))
+                        test_features.append(
+                            torch.from_numpy(np.array(filter)).view(1, conv_mat_size, conv_mat_size).float())
                     counter += 1
+                    params.append((i, j, inv, blur))
     return features, params, test_features
 
 class Dataset(object):
@@ -203,7 +203,6 @@ class Hypernet(nn.Module):
                     break
             h2 = torch.stack(outputs, 1).squeeze()
         return h2.view(-1, 1, conv_mat_size, conv_mat_size)
-
 
     def forward(self, p, input_data):
         conv_mat = self.implement_W(p, redundant_train=True)
@@ -341,9 +340,8 @@ train_size = total_dataset_size - test_size
 random.seed(1)
 torch.manual_seed(1)
 torch.cuda.manual_seed_all(1)
-train_idx = sorted(random.sample(range(total_dataset_size), total_dataset_size - test_size))
+train_idx = random.sample(range(total_dataset_size),total_dataset_size - test_size)
 test_idx = list(set(range(total_dataset_size)).difference(set(train_idx)))
-
 #mnist_dataset = Dataset(4)
 #imgs = mnist_dataset.dataloader_test
 
@@ -359,12 +357,10 @@ for batch_idx, (mnist_data, mnist_target) in enumerate(tdataloader):
     mnist_data = mnist_data.cuda()
     mnist_data = F.upsample(mnist_data, size=(mnist_data.size(2) // 2, mnist_data.size(3) // 2), mode='bilinear')
     break
-
 dataset = generate_translations_dataset()
-
 #for i , (imgs, _) in  enumerate(mnist_dataloader):
 #    break
-function_dataset = utils.TensorDataset(torch.Tensor(range(train_size)), torch.stack([torch.Tensor(i) for i in generate_translations_dataset()[0]]))
+function_dataset = utils.TensorDataset(torch.Tensor(range(total_dataset_size)), torch.stack([torch.Tensor(i) for i in generate_translations_dataset()[0]]))
 function_dataloader = utils.DataLoader(function_dataset, batch_size=64, shuffle=True, drop_last=True)
 
 #dataset = []
@@ -374,13 +370,13 @@ function_dataloader = utils.DataLoader(function_dataset, batch_size=64, shuffle=
 #        dataset.append((result, ej, target))
 
 
-H = Hypernet(p_dim=args.p_dim, input_dim=args.imsize * args.imsize, output_dim=conv_mat_size**2, dataloader=function_dataloader).to(device)
+H = Hypernet(p_dim=args.p_dim, input_dim=args.imsize * args.imsize, output_dim=49, dataloader=function_dataloader).to(device)
 #H = torch.load("//home/ubuntu/implementer_data/good_model_length_20.pyt")
 #H = torch.load("/home/ubuntu/implementer_data/model10000.pyt")
 H.optimizer = optim.RMSprop(H.parameters(), lr=args.H_lr)
 
 #scheduler = CyclicLR(H.optimizer, base_lr=0.000005, max_lr=0.001, step_size=args.epochs // 10, mode='triangular2')
-scheduler = StepLR(H.optimizer, step_size=max(1000, args.epochs) // 3, gamma=0.1)
+scheduler = StepLR(H.optimizer, step_size=max(1000,args.epochs) // 3, gamma=0.1)
 
 programs = []
 optimizers = []
@@ -389,7 +385,7 @@ schedulers = []
 rand_ints = random.sample(range(train_size), 20)
 
 #programs = torch.load("/home/ubuntu/implementer_data/Great_programs.pyt")
-for i in range(train_size):
+for i in range(392):
     programs.append(nn.Parameter(Variable(torch.randn((args.p_dim, 1)).to(device), requires_grad=True).data))
     optimizer_temp = optim.RMSprop([programs[i]], lr=args.p_lr)
     optimizers.append(optimizer_temp)
@@ -421,19 +417,16 @@ features1, params1, test1 = generate_translations_dataset()
 def group_by(programs, number_of_groups, index):
     mats = []
     count = np.zeros(number_of_groups).astype(int)
-    size_of_group = train_size / number_of_groups
+    size_of_group = total_dataset_size / number_of_groups
     for i in range(number_of_groups):
         mats.append(np.array([]))
-    for i in range(total_dataset_size):
+    for i in range(train_size):
         for j in range(number_of_groups):
-            if i not in train_idx:
-                count[j] += 1
-                break
-            elif params1[train_idx.index(i)][index] == j:
+            if params1[i][index] == j:
                 if count[j] == 0:
-                    mats[j] = np.array(torch.tanh(programs[train_idx.index(i)].cpu().detach()).numpy()).reshape((args.p_dim))
+                    mats[j] =  np.array(torch.tanh(programs[i].cpu().detach()).numpy()).reshape((args.p_dim))
                 else:
-                    mats[j] = np.vstack([mats[j], np.array(torch.tanh(programs[train_idx.index(i)].cpu().detach()).numpy()).reshape((args.p_dim))])
+                    mats[j] = np.vstack([mats[j], np.array(torch.tanh(programs[i].cpu().detach()).numpy()).reshape((args.p_dim))])
                 count[j] += 1
     return np.concatenate(mats)
 
@@ -446,21 +439,20 @@ plt.figure(figsize=(100,100))
 plt.subplot(4,1,1)
 plt.imshow(blurs.T)
 plt.gca().set_title("Blur")
-plt.xticks(list(np.linspace(0, train_size, 5).astype(int)[:-1]))
+plt.xticks(list(np.linspace(0, total_dataset_size, 5).astype(int)[:-1]))
 plt.subplot(4,1,2)
 plt.gca().set_title("Inverse")
 plt.imshow(inv.T)
-plt.xticks(list(np.linspace(0, train_size, 3).astype(int)[:-1]))
+plt.xticks(list(np.linspace(0, total_dataset_size, 3).astype(int)[:-1]))
 plt.subplot(4,1,3)
 plt.gca().set_title("X Translation")
 plt.imshow(Xtrans.T)
-plt.xticks(list(np.linspace(0, train_size, 8).astype(int)[:-1]))
+plt.xticks(list(np.linspace(0, total_dataset_size, 8).astype(int)[:-1]))
 plt.subplot(4,1,4)
 plt.gca().set_title("Y Translation")
 plt.imshow(Ytrans.T)
-plt.xticks(list(np.linspace(0, train_size, 8).astype(int)[:-1]))
+plt.xticks(list(np.linspace(0, total_dataset_size, 8).astype(int)[:-1]))
 plt.show()
-
 rand_ints = random.sample(range(train_size), 20)
 
 
@@ -554,5 +546,5 @@ for ei, i in enumerate(test_idx):
     plt.subplot(3, test_size, test_size + ei + 1)
     plt.imshow(np.array(H.implement_W(programs[(test_size * min_arg) + ei]).cpu().detach().numpy()).reshape(conv_mat_size, conv_mat_size))
     plt.subplot(3, test_size, (2 * test_size) + ei + 1)
-    plt.scatter(np.zeros(50), losses)
+    plt.scatter(np.zeros(args.test_copies), losses)
 plt.show()
