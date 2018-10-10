@@ -1,0 +1,9 @@
+executable = ./jobs_list.sh
+arguments = $(Item)
+error = /is/cluster/rantonello/implementer/LOGS/job_$(Item).txt
+output = /is/cluster/rantonello/implementer/LOGS/job_$(Item).txt
+#requirements = CUDAGlobalMemoryMb > 8000
+request_memory = 16000
+request_gpus = 1
+queue from seq 1 1 1 |
+
