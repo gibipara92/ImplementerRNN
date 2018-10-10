@@ -30,6 +30,11 @@ from cls import CyclicLR
 from copy import deepcopy
 from shutil import copyfile
 from datetime import datetime
+import scipy
+import io
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+import PIL
+from torchvision.transforms import ToTensor
 
 parser = argparse.ArgumentParser(description='PyTorch MNIST RGAN')
 # Choose dataset
@@ -39,9 +44,11 @@ parser.add_argument('--meta_folder', default='/home/ubuntu/implementer_data/meta
                     help='path to save models/programs', type=str)
 # Specify size of images in dataset
 parser.add_argument('--imsize', type=int, default=32, help='the height / width of the input image to network')
-parser.add_argument('--epochs', type=int, default=100, help='the height / width of the input image to network')
+parser.add_argument('--epochs', type=int, default=100, help='Number of epochs during training')
+parser.add_argument('--test_epochs', type=int, default=5000, help='Number of epochs during testing')
 parser.add_argument('--p_dim', type=int, default=20, help='the program size to network')
 parser.add_argument('--lstm_size', type=int, default=128, help='Size of LSTM layers')
+parser.add_argument('--mnist_size', type=int, default=200, help='Number of examples in test set')
 parser.add_argument('--reg_lambda', type=float, default=0.000, help='Coefficient of regularization term')
 parser.add_argument('--noise', type=float, default=0.2, help='Amount of noise to add to programs')
 parser.add_argument('--H_lr', type=float, default=0.001, help='Learning rate for implementer')
@@ -51,7 +58,6 @@ parser.add_argument('--display_number', type=int, default=10, help='Number of ra
 parser.add_argument('--path_img',   default='~/Downloads/implmenter_ims', help='Path', type=str)
 parser.add_argument('--no_train_H', action='store_true', default=False, help='Do not train the HyperNet')
 parser.add_argument('--no_train_p', action='store_true', default=False, help='Do not train the program')
-parser.add_argument('--debug', action='store_true', default=False, help='Use dropout in E')
 
 args = parser.parse_args()
 
@@ -80,6 +86,17 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print(args)
 print(device)
 
+ims = []
+batch_size = 64
+total_dataset_size = 392
+test_size = 14
+conv_mat_size = 7
+train_size = total_dataset_size - test_size
+random.seed(1)
+torch.manual_seed(1)
+torch.cuda.manual_seed_all(1)
+train_idx = random.sample(range(total_dataset_size),total_dataset_size - test_size)
+test_idx = list(set(range(total_dataset_size)).difference(set(train_idx)))
 
 
 def generate_translations_dataset():
@@ -95,7 +112,6 @@ def generate_translations_dataset():
     test_features = []
     params = []
     counter = 0
-    print(test_idx)
     for i in range(7):
         for j in range(7):
             for inv in range(2):
@@ -118,6 +134,8 @@ def generate_translations_dataset():
                     counter += 1
                     params.append((i, j, inv, blur))
     return features, params, test_features
+
+features1, params1, test1 = generate_translations_dataset()
 
 class Dataset(object):
     def __init__(self, batch_size):
@@ -174,6 +192,8 @@ class Hypernet(nn.Module):
             self.dataloader = Dataset(batch_size=64)
         else:
             self.dataloader = dataloader
+
+
 
     def implement_W(self, p, redundant_train=False):
         p = p.view(-1, p.shape[-2])
@@ -270,18 +290,82 @@ def train_epoch(H, programs, optimizers, add_noise, epoch, dataloader, train_H, 
     return
 
 
+def group_by(programs, number_of_groups, index):
+    mats = []
+    count = np.zeros(number_of_groups).astype(int)
+    size_of_group = total_dataset_size / number_of_groups
+    for i in range(number_of_groups):
+        mats.append(np.array([]))
+    for i in range(train_size):
+        for j in range(number_of_groups):
+            if params1[i][index] == j:
+                if count[j] == 0:
+                    mats[j] =  np.array(torch.tanh(programs[i].cpu().detach()).numpy()).reshape((args.p_dim))
+                else:
+                    mats[j] = np.vstack([mats[j], np.array(torch.tanh(programs[i].cpu().detach()).numpy()).reshape((args.p_dim))])
+                count[j] += 1
+    return np.concatenate(mats)
+
+def generate_group_fig(programs, epoch):
+    Xtrans = group_by(programs, 7, 0)
+    Ytrans = group_by(programs, 7, 1)
+    inv = group_by(programs, 2, 2)
+    blurs = group_by(programs, 4, 3)
+    plt.subplot(4,1,1)
+    plt.imshow(blurs.T)
+    plt.gca().set_title("Blur")
+    plt.xticks(list(np.linspace(0, total_dataset_size, 5).astype(int)[:-1]))
+    plt.subplot(4,1,2)
+    plt.gca().set_title("Inverse")
+    plt.imshow(inv.T)
+    plt.xticks(list(np.linspace(0, total_dataset_size, 3).astype(int)[:-1]))
+    plt.subplot(4,1,3)
+    plt.gca().set_title("X Translation")
+    plt.imshow(Xtrans.T)
+    plt.xticks(list(np.linspace(0, total_dataset_size, 8).astype(int)[:-1]))
+    plt.subplot(4,1,4)
+    plt.gca().set_title("Y Translation")
+    plt.imshow(Ytrans.T)
+    plt.xticks(list(np.linspace(0, total_dataset_size, 8).astype(int)[:-1]))
+    buf = io.BytesIO()
+    plt.savefig(buf, format='jpeg')
+    buf.seek(0)
+    image = PIL.Image.open(buf)
+    image = ToTensor()(image).unsqueeze(0)
+    writer.add_image('images/groups', image, epoch)
+    return
+
+
+
+def save_implementations(programs, rand_ints, epoch):
+    plt.figure()
+    for i in range(args.display_number):
+        plt.subplot(2, args.display_number, i + 1)
+        plt.axis('off')
+        plt.imshow(np.array(H.implement_W(programs[rand_ints[i]]).cpu().detach().numpy()).reshape(conv_mat_size, conv_mat_size))
+        plt.subplot(2, args.display_number, args.display_number + i + 1)
+        plt.axis('off')
+        plt.imshow(np.array(dataset[0][rand_ints[i]]).reshape(conv_mat_size, conv_mat_size))
+    buf = io.BytesIO()
+    plt.savefig(buf, format='jpeg')
+    buf.seek(0)
+    image = PIL.Image.open(buf)
+    image = ToTensor()(image).unsqueeze(0)
+    writer.add_image('images/implementations', image, epoch)
+    return
+
 def train_net(H, programs, optimizers, epochs, dataloader, train_H, task_id='', old_p=[], add_noise=True):
+    rand_ints = random.sample(range(train_size), 20)
     try:
         for e in range(epochs):
             scheduler.step()
             for sch in schedulers:
                 sch.step()
-            if e != 0:
+            if e != 0 and not args.no_train_H:
                 writer.add_scalar('data/total_loss', H.train_loss[-1], e)
                 writer.add_scalar('data/mse_loss', H.mse_loss[-1], e)
                 writer.add_scalar('data/reg_loss', H.reg_loss[-1], e)
                 writer.add_scalar('data/dims', args.p_dim, e)
-                writer.add_histogram("data/weight_distribution", torch.tanh(torch.stack(programs).clone()).cpu().data.numpy().ravel(), e)
                 #writer.add_scalar('data/lr', H.optimizer.param_groups[0]['lr'], e)
          #   if not e % 1:
          #       if e > 0:
@@ -303,8 +387,15 @@ def train_net(H, programs, optimizers, epochs, dataloader, train_H, task_id='', 
                     post_program_mat[i, :] = np.array(torch.tanh(p.cpu().detach()).numpy()).reshape((args.p_dim))
 
             # joblib.dump((pre_program_mat, post_program_mat), "/home/ubuntu/implementer_data/programs.mat")
-                im = plt.imshow(post_program_mat.T)
-                ims.append([im])
+                if e % 100 == 0 and not args.no_train_H:
+                    writer.add_histogram("data/weight_distribution",
+                                     torch.tanh(torch.stack(programs).clone()).cpu().data.numpy().ravel(), e)
+                    generate_group_fig(programs, e)
+                    save_implementations(programs, rand_ints, e)
+
+
+
+
 
     except KeyboardInterrupt:
         pass
@@ -331,17 +422,7 @@ def length_regularization(programs, idxs):
         penalty += torch.dot(torch.abs(program), loss_penalties)
     return penalty / len(idxs)
 
-ims = []
-batch_size = 64
-total_dataset_size = 392
-test_size = 14
-conv_mat_size = 7
-train_size = total_dataset_size - test_size
-random.seed(1)
-torch.manual_seed(1)
-torch.cuda.manual_seed_all(1)
-train_idx = random.sample(range(total_dataset_size),total_dataset_size - test_size)
-test_idx = list(set(range(total_dataset_size)).difference(set(train_idx)))
+
 #mnist_dataset = Dataset(4)
 #imgs = mnist_dataset.dataloader_test
 
@@ -404,69 +485,6 @@ train_net(H, programs, optimizers, args.epochs, function_dataloader, True)
 
 #plt.show()
 
-plt.figure()
-plt.semilogy(H.train_loss[1:])
-plt.title("Loss over time")
-
-plt.show()
-
-features1, params1, test1 = generate_translations_dataset()
-
-
-
-def group_by(programs, number_of_groups, index):
-    mats = []
-    count = np.zeros(number_of_groups).astype(int)
-    size_of_group = total_dataset_size / number_of_groups
-    for i in range(number_of_groups):
-        mats.append(np.array([]))
-    for i in range(train_size):
-        for j in range(number_of_groups):
-            if params1[i][index] == j:
-                if count[j] == 0:
-                    mats[j] =  np.array(torch.tanh(programs[i].cpu().detach()).numpy()).reshape((args.p_dim))
-                else:
-                    mats[j] = np.vstack([mats[j], np.array(torch.tanh(programs[i].cpu().detach()).numpy()).reshape((args.p_dim))])
-                count[j] += 1
-    return np.concatenate(mats)
-
-Xtrans = group_by(programs, 7, 0)
-Ytrans = group_by(programs, 7, 1)
-inv = group_by(programs, 2, 2)
-blurs = group_by(programs, 4, 3)
-
-plt.figure(figsize=(100,100))
-plt.subplot(4,1,1)
-plt.imshow(blurs.T)
-plt.gca().set_title("Blur")
-plt.xticks(list(np.linspace(0, total_dataset_size, 5).astype(int)[:-1]))
-plt.subplot(4,1,2)
-plt.gca().set_title("Inverse")
-plt.imshow(inv.T)
-plt.xticks(list(np.linspace(0, total_dataset_size, 3).astype(int)[:-1]))
-plt.subplot(4,1,3)
-plt.gca().set_title("X Translation")
-plt.imshow(Xtrans.T)
-plt.xticks(list(np.linspace(0, total_dataset_size, 8).astype(int)[:-1]))
-plt.subplot(4,1,4)
-plt.gca().set_title("Y Translation")
-plt.imshow(Ytrans.T)
-plt.xticks(list(np.linspace(0, total_dataset_size, 8).astype(int)[:-1]))
-plt.show()
-rand_ints = random.sample(range(train_size), 20)
-
-
-
-plt.figure()
-for i in range(10):
-    plt.subplot(2, args.display_number, i+1)
-    plt.imshow(np.array(H.implement_W(programs[rand_ints[i]]).cpu().detach().numpy()).reshape(conv_mat_size, conv_mat_size))
-    plt.subplot(2, args.display_number, args.display_number + i + 1)
-    plt.imshow(np.array(dataset[0][rand_ints[i]]).reshape(conv_mat_size, conv_mat_size))
-
-plt.show()
-
-plt.figure()
 
 #for ij, j in enumerate(range(0, len(dataset[2]), 41)):
 #    plt.subplot(10, 21, (21 * ij) + 1)
@@ -491,7 +509,7 @@ plt.figure()
 #plt.show()
 
 args.no_train_H = True
-args.epochs = 5000
+args.epochs = args.test_epochs
 
 function_dataset = utils.TensorDataset(torch.Tensor(range(test_size * args.test_copies)), torch.stack([torch.Tensor(i) for i in  args.test_copies * generate_translations_dataset()[2]]))
 function_dataloader = utils.DataLoader(function_dataset, batch_size=(test_size * args.test_copies), shuffle=True, drop_last=True)
@@ -511,6 +529,9 @@ for i in range(test_size * args.test_copies):
     #schedulers.append(CyclicLR(optimizer_temp, base_lr=0.00005, max_lr=0.01, step_size=args.epochs // 100, mode='triangular2'))
     schedulers.append(StepLR(optimizer_temp, step_size=max(1000, args.epochs // 2), gamma=0.1))
 #H = torch.load("/home/ubuntu/implementer_data/model10000_20.pyt")
+
+mnist_data = mnist_data[:args.mnist_size]
+
 train_net(H, programs, optimizers, args.epochs, function_dataloader, True, add_noise=False)
 
 # plt.figure()
@@ -520,18 +541,20 @@ train_net(H, programs, optimizers, args.epochs, function_dataloader, True, add_n
 # plt.imshow(post_program_mat.T)
 # plt.show()
 
-plt.figure()
-post_program_mat = []
-for i in range(test_size):
-    post_program_mat.append(torch.stack(programs[i::test_size]))
-post_program_mat = torch.cat(post_program_mat).cpu().detach().numpy()
-plt.imshow(post_program_mat.reshape(test_size * args.test_copies, args.p_dim).T)
-plt.show()
+#plt.figure()
+#post_program_mat = []
+#for i in range(test_size):
+#    post_program_mat.append(torch.stack(programs[i::test_size]))
+#post_program_mat = torch.cat(post_program_mat).cpu().detach().numpy()
+#plt.imshow(post_program_mat.reshape(test_size * args.test_copies, args.p_dim).T)
+#plt.show()
 
 
-plt.figure()
+plt.figure(figsize=(30,10))
+matplotlib.pyplot.subplots_adjust(wspace=0.4)
 for ei, i in enumerate(test_idx):
     plt.subplot(3, test_size, ei+1)
+    plt.axis('off')
     plt.imshow(np.array(dataset[2][ei]).reshape(conv_mat_size, conv_mat_size))
     min_loss = 1000000000
     min_arg = -1
@@ -544,7 +567,9 @@ for ei, i in enumerate(test_idx):
             min_arg = j
         losses.append(loss.item())
     plt.subplot(3, test_size, test_size + ei + 1)
+    plt.axis('off')
     plt.imshow(np.array(H.implement_W(programs[(test_size * min_arg) + ei]).cpu().detach().numpy()).reshape(conv_mat_size, conv_mat_size))
     plt.subplot(3, test_size, (2 * test_size) + ei + 1)
+    plt.axis('on')
     plt.scatter(np.zeros(args.test_copies), losses)
-plt.show()
+plt.savefig(output_folder + "/test_results.jpg")
