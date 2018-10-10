@@ -26,7 +26,6 @@ import joblib
 from torch.optim.lr_scheduler import StepLR
 import matplotlib.animation as animation
 from tensorboardX import SummaryWriter
-from cls import CyclicLR
 from copy import deepcopy
 from shutil import copyfile
 from datetime import datetime
