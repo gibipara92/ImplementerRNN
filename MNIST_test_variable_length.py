@@ -366,6 +366,10 @@ def train_net(H, programs, optimizers, epochs, dataloader, train_H, task_id='', 
                 writer.add_scalar('data/mse_loss', H.mse_loss[-1], e)
                 writer.add_scalar('data/reg_loss', H.reg_loss[-1], e)
                 writer.add_scalar('data/dims', args.p_dim, e)
+            if e != 0 and args.no_train_H:
+                writer.add_scalar('data/test_total_loss', H.train_loss[-1], e)
+                writer.add_scalar('data/test_mse_loss', H.mse_loss[-1], e)
+                writer.add_scalar('data/test_reg_loss', H.reg_loss[-1], e)
                 #writer.add_scalar('data/lr', H.optimizer.param_groups[0]['lr'], e)
          #   if not e % 1:
          #       if e > 0:
