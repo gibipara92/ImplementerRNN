@@ -28,21 +28,24 @@ import matplotlib.animation as animation
 from tensorboardX import SummaryWriter
 from cls import CyclicLR
 from copy import deepcopy
+from shutil import copyfile
+from datetime import datetime
 
-writer = SummaryWriter()
+
+
 
 parser = argparse.ArgumentParser(description='PyTorch MNIST RGAN')
 # Choose dataset
 parser.add_argument('--dataset', default='/home/ubuntu/PycharmProjects/IndependentMechanisms/mnist',
                     help='path to dataset', type=str)
-parser.add_argument('--save_path', default='/home/ubuntu/implementer_data/',
+parser.add_argument('--meta_folder', default='/home/ubuntu/implementer_data/meta/',
                     help='path to save models/programs', type=str)
 # Specify size of images in dataset
 parser.add_argument('--imsize', type=int, default=32, help='the height / width of the input image to network')
 parser.add_argument('--epochs', type=int, default=100, help='the height / width of the input image to network')
 parser.add_argument('--p_dim', type=int, default=20, help='the program size to network')
 parser.add_argument('--lstm_size', type=int, default=128, help='Size of LSTM layers')
-parser.add_argument('--reg_lambda', type=float, default=0.00001, help='Coefficient of regularization')
+parser.add_argument('--reg_lambda', type=float, default=0.0001, help='Coefficient of regularization term')
 parser.add_argument('--noise', type=float, default=0.2, help='Amount of noise to add to programs')
 parser.add_argument('--H_lr', type=float, default=0.001, help='Learning rate for implementer')
 parser.add_argument('--p_lr', type=float, default=0.1, help='Learning rate for programs')
@@ -55,8 +58,32 @@ parser.add_argument('--debug', action='store_true', default=False, help='Use dro
 
 args = parser.parse_args()
 
+args2 = deepcopy(args)
+del args2.meta_folder
+del args2.path_img
+now = datetime.now()
+tbdir = now.strftime("%Y%m%d-%H%M%S") + "/"
+
+try:
+    os.makedirs(args.meta_folder)
+except OSError:
+    pass
+
+try:
+    output_folder = args.meta_folder + '/' + str(args2)
+    os.makedirs(output_folder)
+except OSError:
+    pass
+
+copyfile(os.path.realpath(__file__), output_folder + "/code.py")
+writer = SummaryWriter(args.meta_folder + '/runs/' + str(args2))
+
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+print(args)
 print(device)
+
+
 
 def generate_translations_dataset():
     '''
@@ -258,9 +285,11 @@ def train_net(H, programs, optimizers, epochs, dataloader, train_H, task_id='', 
                 #conv_weight = H.implement_W(p)
                 #save_image(1 - conv_weight.data.cpu().view(-1, 1, 7, 7),
                 #           args.path_img + '/task%s_weights_epc%06d.png' % (task_id, e), nrow=10, normalize=True, scale_each=True)
-            if e % 1000 == 0:
-                torch.save(H, args.save_path + "/model" + str(e) + "_" + str(args.p_dim) + ".pyt")
-                torch.save(programs, args.save_path + "/programs" + str(e) + "_" + str(args.p_dim) + ".pyt")
+            if e % 1000 and not args.no_train_H:
+                torch.save(H, output_folder + "/model.pyt")
+                torch.save(programs, output_folder + "/train_programs.pyt")
+            elif e % 1000:
+                torch.save(programs, output_folder + "/test_programs.pyt")
 
             train_epoch(H, programs, optimizers, add_noise, epoch=e, dataloader=dataloader, train_H=train_H, task_id=task_id)
             if e % 10 == 0:
