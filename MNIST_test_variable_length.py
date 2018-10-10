@@ -45,7 +45,7 @@ parser.add_argument('--imsize', type=int, default=32, help='the height / width o
 parser.add_argument('--epochs', type=int, default=100, help='the height / width of the input image to network')
 parser.add_argument('--p_dim', type=int, default=20, help='the program size to network')
 parser.add_argument('--lstm_size', type=int, default=128, help='Size of LSTM layers')
-parser.add_argument('--reg_lambda', type=float, default=0.0001, help='Coefficient of regularization term')
+parser.add_argument('--reg_lambda', type=float, default=0.005, help='Coefficient of regularization term')
 parser.add_argument('--noise', type=float, default=0.2, help='Amount of noise to add to programs')
 parser.add_argument('--H_lr', type=float, default=0.001, help='Learning rate for implementer')
 parser.add_argument('--p_lr', type=float, default=0.1, help='Learning rate for programs')
@@ -95,7 +95,9 @@ def generate_translations_dataset():
     Any filter generated from within this domain space can be fully specified by the above parameters
     '''
     features = []
+    test_features = []
     params = []
+    counter = 0
     for i in range(7):
         for j in range(7):
             for inv in range(2):
@@ -109,9 +111,14 @@ def generate_translations_dataset():
                                 filter[k][l] = 1.
                     if inv == 1:
                         filter *= -1
-                    features.append(torch.from_numpy(np.array(filter)).view(1, conv_mat_size, conv_mat_size).float())
-                    params.append((i, j, inv, blur))
-    return [features[i] for i in sorted(train_idx)], params, [features[i] for i in test_idx]
+                    if counter in train_idx:
+                        features.append(torch.from_numpy(np.array(filter)).view(1, conv_mat_size, conv_mat_size).float())
+                        params.append((i, j, inv, blur))
+                    else:
+                        test_features.append(torch.from_numpy(np.array(filter)).view(1, conv_mat_size, conv_mat_size).float())
+
+                    counter += 1
+    return features, params, test_features
 
 class Dataset(object):
     def __init__(self, batch_size):
@@ -335,7 +342,7 @@ train_size = total_dataset_size - test_size
 random.seed(1)
 torch.manual_seed(1)
 torch.cuda.manual_seed_all(1)
-train_idx = random.sample(range(total_dataset_size),total_dataset_size - test_size)
+train_idx = sorted(random.sample(range(total_dataset_size), total_dataset_size - test_size))
 test_idx = list(set(range(total_dataset_size)).difference(set(train_idx)))
 
 #mnist_dataset = Dataset(4)
@@ -418,13 +425,16 @@ def group_by(programs, number_of_groups, index):
     size_of_group = train_size / number_of_groups
     for i in range(number_of_groups):
         mats.append(np.array([]))
-    for i in range(train_size):
+    for i in range(total_dataset_size):
         for j in range(number_of_groups):
-            if params1[i][index] == j:
+            if i not in train_idx:
+                count[j] += 1
+                break
+            elif params1[train_idx.index(i)][index] == j:
                 if count[j] == 0:
-                    mats[j] =  np.array(torch.tanh(programs[i].cpu().detach()).numpy()).reshape((args.p_dim))
+                    mats[j] = np.array(torch.tanh(programs[train_idx.index(i)].cpu().detach()).numpy()).reshape((args.p_dim))
                 else:
-                    mats[j] = np.vstack([mats[j], np.array(torch.tanh(programs[i].cpu().detach()).numpy()).reshape((args.p_dim))])
+                    mats[j] = np.vstack([mats[j], np.array(torch.tanh(programs[train_idx.index(i)].cpu().detach()).numpy()).reshape((args.p_dim))])
                 count[j] += 1
     return np.concatenate(mats)
 
