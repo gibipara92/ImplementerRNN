@@ -41,6 +41,11 @@ parser.add_argument('--save_path', default='/home/ubuntu/implementer_data/',
 parser.add_argument('--imsize', type=int, default=32, help='the height / width of the input image to network')
 parser.add_argument('--epochs', type=int, default=100, help='the height / width of the input image to network')
 parser.add_argument('--p_dim', type=int, default=20, help='the program size to network')
+parser.add_argument('--lstm_size', type=int, default=128, help='Size of LSTM layers')
+parser.add_argument('--reg_lambda', type=float, default=0.00001, help='Size of LSTM layers')
+parser.add_argument('--noise', type=float, default=0.2, help='Amount of noise to add to programs')
+parser.add_argument('--H_lr', type=float, default=0.001, help='Learning rate for implementer')
+parser.add_argument('--p_lr', type=float, default=0.1, help='Learning rate for programs')
 parser.add_argument('--test_copies', type=int, default=50, help='Number of random seeds to try for test data')
 parser.add_argument('--display_number', type=int, default=10, help='Number of random seeds to try for test data')
 parser.add_argument('--path_img',   default='~/Downloads/implmenter_ims', help='Path', type=str)
@@ -77,7 +82,7 @@ def generate_translations_dataset():
                                 filter[k][l] = 1.
                     if inv == 1:
                         filter *= -1
-                    features.append(torch.from_numpy(np.array(filter)).view(1, 7, 7).float())
+                    features.append(torch.from_numpy(np.array(filter)).view(1, conv_mat_size, conv_mat_size).float())
                     params.append((i, j, inv, blur))
     return [features[i] for i in sorted(train_idx)], params, [features[i] for i in test_idx]
 
@@ -126,7 +131,7 @@ class Hypernet(nn.Module):
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.p_dim = p_dim
-        self.lstm_size = 128 # args.imsize ** 2
+        self.lstm_size = args.lstm_size # args.imsize ** 2
         sigma = 0.01
         self.lstm1 = torch.nn.LSTMCell(input_size=1, hidden_size=self.lstm_size)
         self.lstm2 = torch.nn.LSTMCell(input_size=self.lstm_size, hidden_size=self.lstm_size)
@@ -140,7 +145,7 @@ class Hypernet(nn.Module):
     def implement_W(self, p, redundant_train=False):
         p = p.view(-1, p.shape[-2])
         if redundant_train:
-            noise = torch.normal(mean=torch.zeros(p.shape), std=0.2)
+            noise = torch.normal(mean=torch.zeros(p.shape), std=args.noise)
             p += noise.cuda()
         p = torch.tanh(p)
         #p = p.view(-1, args.p_dim)
@@ -192,7 +197,7 @@ def train_epoch(H, programs, optimizers, add_noise, epoch, dataloader, train_H, 
         output = H.forward(data, input_data)
         target = F.conv2d(input=input_data, weight=target, bias=None, padding=3)
         mse_loss = F.mse_loss(output, target)
-        reg_loss = length_regularization(programs, idxs) * 0.00001
+        reg_loss = length_regularization(programs, idxs) * args.reg_lambda
         loss = mse_loss + reg_loss
         loss.backward()
         #ETA = .000
@@ -337,7 +342,7 @@ function_dataloader = utils.DataLoader(function_dataset, batch_size=64, shuffle=
 H = Hypernet(p_dim=args.p_dim, input_dim=args.imsize * args.imsize, output_dim=conv_mat_size**2, dataloader=function_dataloader).to(device)
 #H = torch.load("//home/ubuntu/implementer_data/good_model_length_20.pyt")
 #H = torch.load("/home/ubuntu/implementer_data/model10000.pyt")
-H.optimizer = optim.RMSprop(H.parameters(), lr=0.001)
+H.optimizer = optim.RMSprop(H.parameters(), lr=args.H_lr)
 
 #scheduler = CyclicLR(H.optimizer, base_lr=0.000005, max_lr=0.001, step_size=args.epochs // 10, mode='triangular2')
 scheduler = StepLR(H.optimizer, step_size=max(1000, args.epochs) // 3, gamma=0.1)
@@ -351,7 +356,7 @@ rand_ints = random.sample(range(train_size), 20)
 #programs = torch.load("/home/ubuntu/implementer_data/Great_programs.pyt")
 for i in range(train_size):
     programs.append(nn.Parameter(Variable(torch.randn((args.p_dim, 1)).to(device), requires_grad=True).data))
-    optimizer_temp = optim.RMSprop([programs[i]], lr=0.1)
+    optimizer_temp = optim.RMSprop([programs[i]], lr=args.p_lr)
     optimizers.append(optimizer_temp)
     #schedulers.append(CyclicLR(optimizer_temp, base_lr=0.00005, max_lr=0.01, step_size=args.epochs // 100, mode='triangular2'))
     schedulers.append(StepLR(optimizer_temp, step_size=max(1000, args.epochs) // 3, gamma=0.1))
@@ -471,7 +476,7 @@ schedulers = []
 #programs = torch.load("/home/ubuntu/implementer_data/Great_programs.pyt")
 for i in range(test_size * args.test_copies):
     programs.append(nn.Parameter(Variable(torch.randn((args.p_dim, 1)).to(device), requires_grad=False).data))
-    optimizer_temp = optim.RMSprop([programs[i]], lr=0.1)
+    optimizer_temp = optim.RMSprop([programs[i]], lr=args.p_lr)
     optimizers.append(optimizer_temp)
     #schedulers.append(CyclicLR(optimizer_temp, base_lr=0.00005, max_lr=0.01, step_size=args.epochs // 100, mode='triangular2'))
     schedulers.append(StepLR(optimizer_temp, step_size=max(1000, args.epochs // 2), gamma=0.1))
