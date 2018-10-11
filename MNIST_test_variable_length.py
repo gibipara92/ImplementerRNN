@@ -74,9 +74,9 @@ args2.time = now.strftime("%Y%m%d-%H%M%S")
 if args.activation_function == 'tanh':
     args.activation_function = F.tanh
 elif args.activation_function == 'sin':
-    args.activation_function = F.sin
+    args.activation_function = torch.sin
 elif args.activation_function == 'LeakyReLU':
-    args.activation_function == F.LeakyReLU()
+    args.activation_function = F.leaky_relu
 else:
     assert False
 
