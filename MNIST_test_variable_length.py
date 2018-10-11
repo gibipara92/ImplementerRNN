@@ -55,6 +55,7 @@ parser.add_argument('--p_lr', type=float, default=0.1, help='Learning rate for p
 parser.add_argument('--test_copies', type=int, default=50, help='Number of random seeds to try for test data')
 parser.add_argument('--display_number', type=int, default=10, help='Number of random seeds to try for test data')
 parser.add_argument('--path_img',   default='~/Downloads/implmenter_ims', help='Path', type=str)
+parser.add_argument('--activation_function', default='tanh', help='tanh|sin|LeakyReLU', type=str)
 parser.add_argument('--no_train_H', action='store_true', default=False, help='Do not train the HyperNet')
 parser.add_argument('--no_train_p', action='store_true', default=False, help='Do not train the program')
 
@@ -64,8 +65,21 @@ args2 = deepcopy(args)
 del args2.meta_folder
 del args2.path_img
 del args2.dataset
+del args2.no_train_H
+del args2.no_train_p
+
 now = datetime.now()
 args2.time = now.strftime("%Y%m%d-%H%M%S")
+
+if args.activation_function == 'tanh':
+    args.activation_function = F.tanh
+elif args.activation_function == 'sin':
+    args.activation_function = F.sin
+elif args.activation_function == 'LeakyReLU':
+    args.activation_function == F.LeakyReLU()
+else:
+    assert False
+
 
 try:
     os.makedirs(args.meta_folder)
@@ -229,7 +243,7 @@ class Hypernet(nn.Module):
         output = F.conv2d(input=input_data, weight=conv_mat, bias=None, padding=3)
         # output = F.linear(input=output, weight=weight2)
         # return conv_mat
-        return output
+        return args.activation_function(output)
         # return weight
 
 def train_epoch(H, programs, optimizers, add_noise, mnist_data, epoch, dataloader, train_H, signature=False, task_id=''):
@@ -247,7 +261,7 @@ def train_epoch(H, programs, optimizers, add_noise, mnist_data, epoch, dataloade
         #output = H.implement_W(data, redundant_train=add_noise)
         input_data = mnist_data.view(-1, 1, args.imsize, args.imsize)
         output = H.forward(data, input_data)
-        target = F.conv2d(input=input_data, weight=target, bias=None, padding=3)
+        target = args.activation_function(F.conv2d(input=input_data, weight=target, bias=None, padding=3))
         mse_loss = F.mse_loss(output, target)
         reg_loss = length_regularization(programs, idxs) * args.reg_lambda
         loss = mse_loss + reg_loss
