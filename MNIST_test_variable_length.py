@@ -63,6 +63,7 @@ args = parser.parse_args()
 args2 = deepcopy(args)
 del args2.meta_folder
 del args2.path_img
+del args2.dataset
 now = datetime.now()
 tbdir = now.strftime("%Y%m%d-%H%M%S") + "/"
 
