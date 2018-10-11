@@ -65,7 +65,7 @@ del args2.meta_folder
 del args2.path_img
 del args2.dataset
 now = datetime.now()
-tbdir = now.strftime("%Y%m%d-%H%M%S") + "/"
+args2.time = now.strftime("%Y%m%d-%H%M%S")
 
 try:
     os.makedirs(args.meta_folder)
