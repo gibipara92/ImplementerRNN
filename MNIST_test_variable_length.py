@@ -354,7 +354,32 @@ def save_implementations(programs, rand_ints, epoch):
     writer.add_image('images/implementations', image, epoch)
     return
 
-def train_net(H, programs, optimizers, epochs, dataloader, train_H, task_id='', old_p=[], add_noise=True):
+def generate_test_results(programs, H, epoch):
+    plt.figure(figsize=(30,10))
+    matplotlib.pyplot.subplots_adjust(wspace=0.4)
+    for ei, i in enumerate(test_idx):
+        plt.subplot(3, test_size, ei+1)
+        plt.axis('off')
+        plt.imshow(np.array(dataset[2][ei]).reshape(conv_mat_size, conv_mat_size))
+        min_loss = 1000000000
+        min_arg = -1
+        losses = []
+        for j in range(args.test_copies):
+            output = H.implement_W(programs[test_size * j + ei], redundant_train=True)
+            loss = F.mse_loss(output, torch.Tensor(generate_translations_dataset()[2][ei]).cuda().view(1, 1, conv_mat_size, conv_mat_size))
+            if loss < min_loss:
+                min_loss = loss
+                min_arg = j
+            losses.append(loss.item())
+        plt.subplot(3, test_size, test_size + ei + 1)
+        plt.axis('off')
+        plt.imshow(np.array(H.implement_W(programs[(test_size * min_arg) + ei]).cpu().detach().numpy()).reshape(conv_mat_size, conv_mat_size))
+        plt.subplot(3, test_size, (2 * test_size) + ei + 1)
+        plt.axis('on')
+        plt.scatter(np.zeros(args.test_copies), losses)
+    plt.savefig(output_folder + "/" + str(epoch) + "_" + "test_results.jpg")
+
+def train_net(H, programs, optimizers, epochs, dataloader, train_H, task_id='', old_p=[], add_noise=True, train_e=False):
     rand_ints = random.sample(range(train_size), 20)
     try:
         for e in range(epochs):
@@ -367,9 +392,9 @@ def train_net(H, programs, optimizers, epochs, dataloader, train_H, task_id='', 
                 writer.add_scalar('data/reg_loss', H.reg_loss[-1], e)
                 writer.add_scalar('data/dims', args.p_dim, e)
             if e != 0 and args.no_train_H:
-                writer.add_scalar('data/test_total_loss', H.train_loss[-1], e)
-                writer.add_scalar('data/test_mse_loss', H.mse_loss[-1], e)
-                writer.add_scalar('data/test_reg_loss', H.reg_loss[-1], e)
+                writer.add_scalar('data/test_total_loss' + "_" + str(train_e), H.train_loss[-1], e)
+                writer.add_scalar('data/test_mse_loss' + "_" + str(train_e), H.mse_loss[-1], e)
+                writer.add_scalar('data/test_reg_loss' + "_" + str(train_e), H.reg_loss[-1], e)
                 #writer.add_scalar('data/lr', H.optimizer.param_groups[0]['lr'], e)
          #   if not e % 1:
          #       if e > 0:
@@ -378,12 +403,32 @@ def train_net(H, programs, optimizers, epochs, dataloader, train_H, task_id='', 
                 #conv_weight = H.implement_W(p)
                 #save_image(1 - conv_weight.data.cpu().view(-1, 1, 7, 7),
                 #           args.path_img + '/task%s_weights_epc%06d.png' % (task_id, e), nrow=10, normalize=True, scale_each=True)
-            if e % 1000 and not args.no_train_H:
+            if e % 2000 == 0 and not args.no_train_H:
                 torch.save(H, output_folder + "/model.pyt")
                 torch.save(programs, output_folder + "/train_programs.pyt")
-            elif e % 1000:
-                torch.save(programs, output_folder + "/test_programs.pyt")
+                args.no_train_H = True
+                args.epochs = 1000
 
+                function_dataset_test = utils.TensorDataset(torch.Tensor(range(test_size * args.test_copies)), torch.stack(
+                    [torch.Tensor(i) for i in args.test_copies * generate_translations_dataset()[2]]))
+                function_dataloader_test = utils.DataLoader(function_dataset_test, batch_size=(test_size * args.test_copies),
+                                                       shuffle=True, drop_last=True)
+
+                programs_test = []
+                optimizers_test = []
+                schedulers_test = []
+
+                for i in range(test_size * args.test_copies):
+                    programs_test.append(
+                        nn.Parameter(Variable(torch.randn((args.p_dim, 1)).to(device), requires_grad=False).data))
+                    optimizer_temp = optim.RMSprop([programs_test[i]], lr=args.p_lr)
+                    optimizers_test.append(optimizer_temp)
+                    schedulers_test.append(StepLR(optimizer_temp, step_size=max(1000, args.epochs // 2), gamma=0.1))
+
+                train_net(H, programs_test, optimizers_test, args.epochs, function_dataloader_test, True, add_noise=False, train_e=e)
+                generate_test_results(programs_test, H, e)
+                torch.save(programs_test, output_folder + "/" + str(train_e) + "_" + "test_programs.pyt")
+                args.no_train_H = False
             train_epoch(H, programs, optimizers, add_noise, epoch=e, dataloader=dataloader, train_H=train_H, task_id=task_id)
             if e % 10 == 0:
                 post_program_mat = np.zeros((len(programs), args.p_dim))
@@ -480,7 +525,7 @@ for i in range(392):
 #fig = plt.figure()
 
 
-train_net(H, programs, optimizers, args.epochs, function_dataloader, True)
+train_net(H, programs, optimizers, args.epochs, function_dataloader, True, train_e=False)
 
 
 #ani = animation.ArtistAnimation(fig, ims, interval=25, blit=True, repeat_delay=0)
@@ -512,31 +557,6 @@ train_net(H, programs, optimizers, args.epochs, function_dataloader, True)
 #        plt.imshow(np.array(H.implement_W(p).cpu().detach().numpy()).reshape(7, 7))
 #plt.show()
 
-args.no_train_H = True
-args.epochs = args.test_epochs
-
-function_dataset = utils.TensorDataset(torch.Tensor(range(test_size * args.test_copies)), torch.stack([torch.Tensor(i) for i in  args.test_copies * generate_translations_dataset()[2]]))
-function_dataloader = utils.DataLoader(function_dataset, batch_size=(test_size * args.test_copies), shuffle=True, drop_last=True)
-
-programs = []
-optimizers = []
-schedulers = []
-
-#H = torch.load("/home/ubuntu/implementer_data/model20000_20.pyt")
-
-
-#programs = torch.load("/home/ubuntu/implementer_data/Great_programs.pyt")
-for i in range(test_size * args.test_copies):
-    programs.append(nn.Parameter(Variable(torch.randn((args.p_dim, 1)).to(device), requires_grad=False).data))
-    optimizer_temp = optim.RMSprop([programs[i]], lr=args.p_lr)
-    optimizers.append(optimizer_temp)
-    #schedulers.append(CyclicLR(optimizer_temp, base_lr=0.00005, max_lr=0.01, step_size=args.epochs // 100, mode='triangular2'))
-    schedulers.append(StepLR(optimizer_temp, step_size=max(1000, args.epochs // 2), gamma=0.1))
-#H = torch.load("/home/ubuntu/implementer_data/model10000_20.pyt")
-
-mnist_data = mnist_data[:args.mnist_size]
-
-train_net(H, programs, optimizers, args.epochs, function_dataloader, True, add_noise=False)
 
 # plt.figure()
 # post_program_mat = np.zeros((len(programs), args.p_dim))
@@ -552,28 +572,3 @@ train_net(H, programs, optimizers, args.epochs, function_dataloader, True, add_n
 #post_program_mat = torch.cat(post_program_mat).cpu().detach().numpy()
 #plt.imshow(post_program_mat.reshape(test_size * args.test_copies, args.p_dim).T)
 #plt.show()
-
-
-plt.figure(figsize=(30,10))
-matplotlib.pyplot.subplots_adjust(wspace=0.4)
-for ei, i in enumerate(test_idx):
-    plt.subplot(3, test_size, ei+1)
-    plt.axis('off')
-    plt.imshow(np.array(dataset[2][ei]).reshape(conv_mat_size, conv_mat_size))
-    min_loss = 1000000000
-    min_arg = -1
-    losses = []
-    for j in range(args.test_copies):
-        output = H.implement_W(programs[test_size * j + ei], redundant_train=True)
-        loss = F.mse_loss(output, torch.Tensor(generate_translations_dataset()[2][ei]).cuda().view(1, 1, conv_mat_size, conv_mat_size))
-        if loss < min_loss:
-            min_loss = loss
-            min_arg = j
-        losses.append(loss.item())
-    plt.subplot(3, test_size, test_size + ei + 1)
-    plt.axis('off')
-    plt.imshow(np.array(H.implement_W(programs[(test_size * min_arg) + ei]).cpu().detach().numpy()).reshape(conv_mat_size, conv_mat_size))
-    plt.subplot(3, test_size, (2 * test_size) + ei + 1)
-    plt.axis('on')
-    plt.scatter(np.zeros(args.test_copies), losses)
-plt.savefig(output_folder + "/test_results.jpg")
