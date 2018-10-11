@@ -232,7 +232,7 @@ class Hypernet(nn.Module):
         return output
         # return weight
 
-def train_epoch(H, programs, optimizers, add_noise, epoch, dataloader, train_H, signature=False, task_id=''):
+def train_epoch(H, programs, optimizers, add_noise, mnist_data, epoch, dataloader, train_H, signature=False, task_id=''):
     H.train()
     new_loss = []
     new_mse_losses = []
@@ -379,7 +379,7 @@ def generate_test_results(programs, H, epoch):
         plt.scatter(np.zeros(args.test_copies), losses)
     plt.savefig(output_folder + "/" + str(epoch) + "_" + "test_results.jpg")
 
-def train_net(H, programs, optimizers, epochs, dataloader, train_H, task_id='', old_p=[], add_noise=True, train_e=False):
+def train_net(H, programs, optimizers, epochs, dataloader, train_H, mnist_data, task_id='', old_p=[], add_noise=True, train_e=False):
     rand_ints = random.sample(range(train_size), 20)
     try:
         for e in range(epochs):
@@ -424,12 +424,11 @@ def train_net(H, programs, optimizers, epochs, dataloader, train_H, task_id='', 
                     optimizer_temp = optim.RMSprop([programs_test[i]], lr=args.p_lr)
                     optimizers_test.append(optimizer_temp)
                     schedulers_test.append(StepLR(optimizer_temp, step_size=max(1000, args.epochs // 2), gamma=0.1))
-
-                train_net(H, programs_test, optimizers_test, args.epochs, function_dataloader_test, True, add_noise=False, train_e=e)
+                train_net(H, programs_test, optimizers_test, args.epochs, function_dataloader_test, True, mnist_data[:args.mnist_size], add_noise=False, train_e=e)
                 generate_test_results(programs_test, H, e)
                 torch.save(programs_test, output_folder + "/" + str(train_e) + "_" + "test_programs.pyt")
                 args.no_train_H = False
-            train_epoch(H, programs, optimizers, add_noise, epoch=e, dataloader=dataloader, train_H=train_H, task_id=task_id)
+            train_epoch(H, programs, optimizers, add_noise, mnist_data, epoch=e, dataloader=dataloader, train_H=train_H, task_id=task_id)
             if e % 10 == 0:
                 post_program_mat = np.zeros((len(programs), args.p_dim))
                 for i, p in enumerate(programs):
@@ -487,6 +486,7 @@ for batch_idx, (mnist_data, mnist_target) in enumerate(tdataloader):
     mnist_data = mnist_data.cuda()
     mnist_data = F.upsample(mnist_data, size=(mnist_data.size(2) // 2, mnist_data.size(3) // 2), mode='bilinear')
     break
+mnist_store = deepcopy(mnist_data)
 dataset = generate_translations_dataset()
 #for i , (imgs, _) in  enumerate(mnist_dataloader):
 #    break
@@ -525,7 +525,7 @@ for i in range(392):
 #fig = plt.figure()
 
 
-train_net(H, programs, optimizers, args.epochs, function_dataloader, True, train_e=False)
+train_net(H, programs, optimizers, args.epochs, function_dataloader, True, mnist_data, train_e=False)
 
 
 #ani = animation.ArtistAnimation(fig, ims, interval=25, blit=True, repeat_delay=0)
