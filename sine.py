@@ -169,15 +169,15 @@ class Hypernet(nn.Module):
                 if c2 == self.output_dim:
                     break
             h2 = torch.stack(outputs, 1).squeeze()
-        return h2.view(-1, 40, 2)
+        return h2.view(-1, 40, 42)
 
     def forward(self, p, input_data):
         weights = self.implement_W(torch.stack(p), redundant_train=True)
-        result = torch.zeros((1, 1000))
         for i in range(1):
             output = F.relu_(F.linear(torch.Tensor(torch.Tensor(input_data[i]).view(-1, 1)), weight=torch.Tensor(weights[i][:, 0].cpu()).view(-1,1)))
-            output = F.relu_(F.linear(torch.Tensor(output), weight=torch.Tensor(weights[i][:, 1].cpu()).view(1,-1)).view(1000))
-            result[i] = output
+            output = F.relu_(F.linear(torch.Tensor(output), weight=torch.Tensor(weights[i][:, 1:41].cpu())))
+            output = F.relu_(F.linear(torch.Tensor(output), weight=torch.Tensor(weights[i][:, 41].cpu()).view(1, -1)))
+            result = output.view(-1)
         return result
 
 def train_epoch(H, programs, optimizers, epoch, train_H):
@@ -194,7 +194,7 @@ def train_epoch(H, programs, optimizers, epoch, train_H):
     H.optimizer.zero_grad()
     for i in list(np.array(batch).astype(int)):
         optimizers[i].zero_grad()
-    output = H.forward([programs[i] for i in batch], init_inputs)
+    output = H.forward([programs[i] for i in batch], init_inputs).view(-1, 1000)
     mse_loss = F.mse_loss(output, target)
     loss = mse_loss# + reg_loss
     loss.backward()
@@ -243,7 +243,7 @@ def train_net(H, programs, optimizers, epochs, train_H):
 dataset_size = 1
 dataset = generate_sinusoid_batch(dataset_size)
 
-H = Hypernet(p_dim=args.p_dim, input_dim=args.imsize * args.imsize, output_dim=80).to(device)
+H = Hypernet(p_dim=args.p_dim, input_dim=args.imsize * args.imsize, output_dim=1680).to(device)
 
 H.optimizer = optim.RMSprop(H.parameters(), lr=args.H_lr)
 
