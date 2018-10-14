@@ -138,7 +138,7 @@ class Hypernet(nn.Module):
         sigma = 0.01
         self.lstm1 = torch.nn.LSTMCell(input_size=1, hidden_size=self.lstm_size)
         self.lstm2 = torch.nn.LSTMCell(input_size=self.lstm_size, hidden_size=self.lstm_size)
-        self.fc1 = nn.Parameter(torch.randn(self.lstm_size, 1) * sigma)
+        self.fc1 = nn.Parameter(torch.randn(self.lstm_size, 40) * sigma)
 
 
 
@@ -165,7 +165,7 @@ class Hypernet(nn.Module):
             for i, input_t in enumerate(range(self.output_dim)):
                 h_t2, c_t2 = self.lstm2(h_t1, (h_t2, c_t2))
                 outputs += [torch.mm(h_t2, self.fc1)]
-                c2 += 1
+                c2 += 40
                 if c2 == self.output_dim:
                     break
             h2 = torch.stack(outputs, 1).squeeze()
@@ -198,7 +198,7 @@ def train_epoch(H, programs, optimizers, epoch, train_H):
     mse_loss = F.mse_loss(output, target)
     loss = mse_loss# + reg_loss
     loss.backward()
-    if epoch % 1000 == 0:
+    if epoch % 100 == 0:
         plt.plot(np.array(init_inputs[0]), np.array(target[0]))
         plt.plot(np.array(init_inputs[0]), np.array(output.cpu().detach().numpy()[0]))
         plt.show()
