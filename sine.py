@@ -161,7 +161,7 @@ class Hypernet(nn.Module):
                     break
             h2 = torch.stack(outputs, 1).squeeze()
         # We output 40 * 42 = 1680 weights for our two hidden layer network
-        return h2.view(-1, 40, 42)
+        return h2.view(-1, 40, 45)
 
     def forward(self, p, input_data):
         # First, generate weights from program (adding noise to the programs)
@@ -169,9 +169,9 @@ class Hypernet(nn.Module):
         result = []
         # then, for each data point, apply the neural network described by the weights to the input_data
         for i in range(dataset_size):
-            output = F.elu(F.linear(torch.Tensor(torch.Tensor(input_data[i]).view(-1, 1)), weight=torch.Tensor(weights[i][:, 0].cpu()).view(-1,1)))
-            output = F.elu(F.linear(torch.Tensor(output), weight=torch.Tensor(weights[i][:, 1:41].cpu())))
-            output = F.linear(torch.Tensor(output), weight=torch.Tensor(weights[i][:, 41].cpu()).view(1, -1))
+            output = F.elu(F.linear(torch.Tensor(torch.Tensor(input_data[i]).view(-1, 1)), weight=torch.Tensor(weights[i][:, 0].cpu()).view(-1,1)) + weights[i][:, 1].cpu().repeat(500, 1))
+            output = F.elu(F.linear(torch.Tensor(output), weight=torch.Tensor(weights[i][:, 2:42].cpu())) + weights[i][:, 42].cpu().repeat(500, 1))
+            output = F.linear(torch.Tensor(output), weight=torch.Tensor(weights[i][:, 43].cpu()).view(1, -1)) + weights[i][:, 43][0].cpu().repeat(500, 1)
             result.append(output.view(-1))
         return torch.stack(result)
 
@@ -253,7 +253,7 @@ dataset_size = 100
 dataset = generate_sinusoid_batch(dataset_size)
 
 # Generate implementer and assign an optimizer and learning rate scheduler for it
-H = Hypernet(p_dim=args.p_dim, output_dim=1680).to(device)
+H = Hypernet(p_dim=args.p_dim, output_dim=1800).to(device)
 
 H.optimizer = optim.RMSprop(H.parameters(), lr=args.H_lr)
 
@@ -278,4 +278,24 @@ torch.cuda.manual_seed_all(1)
 
 # Run main function
 #H = torch.load("Good progra")
+train_net(H, programs, optimizers, args.epochs, True)
+
+dataset_size = 10
+dataset = generate_sinusoid_batch(dataset_size)
+
+args.no_train_H = True
+
+
+programs = []
+optimizers = []
+schedulers = []
+
+# Generate programs and assign an optimizer and scheduler for each
+for i in range(dataset_size):
+    programs.append(nn.Parameter(Variable(torch.randn((args.p_dim, 1)).to(device), requires_grad=True).data))
+    optimizer_temp = optim.RMSprop([programs[i]], lr=args.p_lr)
+    optimizers.append(optimizer_temp)
+    #schedulers.append(CyclicLR(optimizer_temp, base_lr=0.00005, max_lr=0.01, step_size=args.epochs // 100, mode='triangular2'))
+    schedulers.append(StepLR(optimizer_temp, step_size=max(1000, args.epochs) // 2, gamma=0.1))
+
 train_net(H, programs, optimizers, args.epochs, True)
