@@ -171,7 +171,7 @@ class Hypernet(nn.Module):
         for i in range(dataset_size):
             output = F.elu(F.linear(torch.Tensor(torch.Tensor(input_data[i]).view(-1, 1)), weight=torch.Tensor(weights[i][:, 0].cpu()).view(-1,1)) + weights[i][:, 1].cpu().repeat(500, 1))
             output = F.elu(F.linear(torch.Tensor(output), weight=torch.Tensor(weights[i][:, 2:42].cpu())) + weights[i][:, 42].cpu().repeat(500, 1))
-            output = F.linear(torch.Tensor(output), weight=torch.Tensor(weights[i][:, 43].cpu()).view(1, -1)) + weights[i][:, 43][0].cpu().repeat(500, 1)
+            output = F.linear(torch.Tensor(output), weight=torch.Tensor(weights[i][:, 43].cpu()).view(1, -1)) + weights[i][:, 44][0].cpu().repeat(500, 1)
             result.append(output.view(-1))
         return torch.stack(result)
 
